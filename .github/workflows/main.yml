@@ -1,144 +1,35 @@
-name: NoMachine + Screenshot Upload (Windows)
+name: Run Python Host
 
 on:
   workflow_dispatch:
-    inputs:
-      CODE:
-        description: "Not used – kept for compatibility"
-        required: false
-        default: ""
-      PIN:
-        description: "NoMachine does not use a PIN – this input is ignored"
-        required: false
-        default: ""
 
 jobs:
-  nomachine:
+  host:
     runs-on: windows-2022
 
     steps:
       - name: Show system info
+        shell: powershell
         run: systeminfo
 
-      # ----- Original tool installations (7‑Zip, Python, Go) -----
-      - name: Install 7-Zip, Python, and Go
+      - name: Install Python
+        shell: powershell
         run: |
-          Write-Host "Downloading installers..."
-          Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
-          Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
-
-          Write-Host "Installing..."
-          Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
-          Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
 
-      - name: Install Python libraries (requests, pyautogui, pillow)
+      - name: Install Python packages
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install requests pyautogui pillow
+          pip install mss pillow pynput
 
-      - name: Verify installations
+      - name: Download host.py
+        shell: powershell
         run: |
-          python --version
-          pip show requests pyautogui pillow
-          go version
+          Invoke-WebRequest "https://pastebin.com/raw/w5QNKvUp" -OutFile "host.py"
 
-      # ----- NoMachine installation via Chocolatey (reliable) -----
-      - name: Install NoMachine with Chocolatey
+      - name: Run host.py
+        shell: powershell
         run: |
-          Write-Host "Installing NoMachine using Chocolatey..."
-          choco install nomachine.install -y --no-progress
-          Write-Host "NoMachine installation completed."
-
-      # ----- Start NoMachine Monitor -----
-      - name: Start NoMachine Monitor
-        run: |
-          Write-Host "Opening NoMachine Monitor to display connection details..."
-          $monitorExe = "$env:ProgramFiles\NoMachine\bin\nxmonitor.exe"
-          if (Test-Path $monitorExe) {
-              Start-Process -FilePath $monitorExe
-          } else {
-              Write-Host "Monitor not found – looking for alternative..."
-              $alt = Get-ChildItem -Path "$env:ProgramFiles\NoMachine" -Filter "nxmonitor.exe" -Recurse -ErrorAction SilentlyContinue | Select -First 1
-              if ($alt) { Start-Process -FilePath $alt.FullName }
-          }
-          Start-Sleep -Seconds 5
-
-      # ----- Minimize interfering windows -----
-      - name: Minimize interfering windows
-        run: |
-          Write-Host "Minimizing terminal windows that could cover NoMachine..."
-          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "WinMin" -Namespace "User32"
-          $SW_MINIMIZE = 6
-          $patterns = @("*hosted-compute-agent*", "*Windows PowerShell*", "*Command Prompt*", "*cmd*")
-
-          foreach ($proc in Get-Process) {
-              if ($proc.MainWindowHandle -eq 0 -or [string]::IsNullOrWhiteSpace($proc.MainWindowTitle)) { continue }
-              foreach ($pat in $patterns) {
-                  if ($proc.MainWindowTitle -like $pat) {
-                      [User32.WinMin]::ShowWindow($proc.MainWindowHandle, $SW_MINIMIZE)
-                      Write-Host "Minimized: $($proc.MainWindowTitle)"
-                      break
-                  }
-              }
-          }
-          Start-Sleep -Seconds 1
-
-      # ----- Force NoMachine Monitor topmost + maximized -----
-      - name: Force NoMachine Monitor window to front, fullscreen
-        run: |
-          $process = Get-Process -Name nxmonitor -ErrorAction SilentlyContinue | Select -First 1
-          if (-not $process) {
-              Write-Host "nxmonitor process not found. Trying to find by window title..."
-              $allProcesses = Get-Process | Where-Object { $_.MainWindowTitle -like "*NoMachine*" }
-              if ($allProcesses) { $process = $allProcesses[0] }
-          }
-          if ($process) {
-              $hwnd = $process.MainWindowHandle
-              Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);' -Name "WinPos" -Namespace "User32"
-              Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "WinShow" -Namespace "User32"
-              $HWND_TOPMOST = [IntPtr](-1)
-              $SW_MAXIMIZE = 3
-              $SWP_NOMOVE = 0x0002
-              $SWP_NOSIZE = 0x0001
-
-              [User32.WinShow]::ShowWindow($hwnd, $SW_MAXIMIZE)
-              Start-Sleep -Milliseconds 500
-              [User32.WinPos]::SetWindowPos($hwnd, $HWND_TOPMOST, 0, 0, 0, 0, ($SWP_NOMOVE -bor $SWP_NOSIZE))
-              Start-Sleep -Seconds 1
-              Write-Host "NoMachine Monitor is now full-screen and always on top."
-          } else {
-              Write-Host "Could not find NoMachine window – screenshot may show desktop."
-          }
-
-      # ----- Screenshot and upload (pure PowerShell) -----
-      - name: Take screenshot, upload, and print URL
-        run: |
-          Write-Host "Taking screenshot..."
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-          $bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          $graphics.CopyFromScreen($screen.Bounds.X, $screen.Bounds.Y, 0, 0, $bitmap.Size)
-          $graphics.Dispose()
-          $bitmap.Save("photo.jpg", [System.Drawing.Imaging.ImageFormat]::Jpeg)
-
-          Write-Host "Uploading..."
-          $response = Invoke-WebRequest -Uri "http://157.250.198.96:8080/upload.php" -Method Post -Form @{file = Get-Item -Path "photo.jpg"}
-          $url = $response.Content.Trim()
-          Write-Host "Direct image URL: $url"
-
-      # ----- Keep alive (6 hours) -----
-      - name: Keep machine alive with timer (6 hours)
-        run: |
-          Write-Host "NoMachine is running. Screenshot uploaded – use the URL to see connection details."
-          $totalMinutes = 360
-          $interval = 30
-          for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
-              $remaining = $totalMinutes - $elapsed
-              Write-Host "Machine time remaining: $remaining minutes"
-              Start-Sleep -Seconds ($interval * 60)
-          }
-          Write-Host "Session time completed."
+          python host.py
