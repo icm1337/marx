@@ -64,35 +64,50 @@ jobs:
       - name: Wait for RustDesk window to appear
         run: Start-Sleep -Seconds 4
 
-      # ----- Make RustDesk window topmost + maximized (prevents occlusion) -----
+      # ----- NEW: Minimize interfering windows (hosted agent, PowerShell, CMD) -----
+      - name: Minimize interfering windows
+        run: |
+          Write-Host "Minimizing terminal windows that could cover RustDesk..."
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "WinMin" -Namespace "User32"
+          $SW_MINIMIZE = 6
+          $patterns = @("*hosted-compute-agent*", "*Windows PowerShell*", "*Command Prompt*", "*cmd*")
+
+          foreach ($proc in Get-Process) {
+              if ($proc.MainWindowHandle -eq 0 -or [string]::IsNullOrWhiteSpace($proc.MainWindowTitle)) { continue }
+              foreach ($pat in $patterns) {
+                  if ($proc.MainWindowTitle -like $pat) {
+                      [User32.WinMin]::ShowWindow($proc.MainWindowHandle, $SW_MINIMIZE)
+                      Write-Host "Minimized: $($proc.MainWindowTitle)"
+                      break
+                  }
+              }
+          }
+          # Give windows time to minimize
+          Start-Sleep -Seconds 1
+
+      # ----- Force RustDesk topmost + maximized (no occlusion possible now) -----
       - name: Force RustDesk window topmost and maximized
         run: |
           $process = Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Select -First 1
           if ($process) {
               $hwnd = $process.MainWindowHandle
-              # Define needed API functions
               Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);' -Name "WinPos" -Namespace "User32"
               Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "WinShow" -Namespace "User32"
-
               $HWND_TOPMOST = [IntPtr](-1)
               $SW_MAXIMIZE = 3
               $SWP_NOMOVE = 0x0002
               $SWP_NOSIZE = 0x0001
 
-              # Maximize the window
               [User32.WinShow]::ShowWindow($hwnd, $SW_MAXIMIZE)
               Start-Sleep -Milliseconds 500
-
-              # Set it as topmost (always on top, even of other topmost windows)
               [User32.WinPos]::SetWindowPos($hwnd, $HWND_TOPMOST, 0, 0, 0, 0, ($SWP_NOMOVE -bor $SWP_NOSIZE))
               Start-Sleep -Seconds 1
-
               Write-Host "RustDesk is now full-screen and always on top."
           } else {
               Write-Host "RustDesk process not found – continuing anyway."
           }
 
-      # ----- Screenshot and upload – pure PowerShell, no here‑string -----
+      # ----- Screenshot and upload (pure PowerShell, no here‑string) -----
       - name: Take screenshot, upload, and print URL
         run: |
           Write-Host "Taking screenshot..."
