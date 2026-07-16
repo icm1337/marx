@@ -61,8 +61,34 @@ jobs:
           Write-Host "Launching RustDesk..."
           Start-Process -FilePath $rustDeskExe -ArgumentList "--password", $pin
 
-      - name: Wait for RustDesk window
+      - name: Wait for RustDesk window to appear
         run: Start-Sleep -Seconds 4
+
+      # ----- NEW: Bring RustDesk window to the front (like clicking the taskbar icon) -----
+      - name: Activate RustDesk window
+        run: |
+          $process = Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Select -First 1
+          if ($process) {
+              Add-Type @"
+              using System;
+              using System.Runtime.InteropServices;
+              public class Win32Window {
+                  [DllImport("user32.dll")]
+                  public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+                  [DllImport("user32.dll")]
+                  public static extern bool SetForegroundWindow(IntPtr hWnd);
+              }
+"@
+              # Restore the window if minimized (SW_RESTORE = 9)
+              [Win32Window]::ShowWindowAsync($process.MainWindowHandle, 9)
+              Start-Sleep -Milliseconds 500
+              # Bring it to the foreground
+              [Win32Window]::SetForegroundWindow($process.MainWindowHandle)
+              Start-Sleep -Seconds 1
+              Write-Host "RustDesk window activated."
+          } else {
+              Write-Host "RustDesk process not found – continuing anyway."
+          }
 
       # ----- Screenshot and upload -----
       - name: Take screenshot, upload, and print URL
