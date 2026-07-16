@@ -1,4 +1,4 @@
-name: RustDesk + Screenshot Upload (Windows)
+name: NoMachine + Screenshot Upload (Windows)
 
 on:
   workflow_dispatch:
@@ -8,19 +8,19 @@ on:
         required: false
         default: ""
       PIN:
-        description: "RustDesk permanent password (6+ digits)"
-        required: true
-        default: "123456"
+        description: "NoMachine does not use a PIN – this input is ignored"
+        required: false
+        default: ""
 
 jobs:
-  rustdesk:
+  nomachine:
     runs-on: windows-2022
 
     steps:
       - name: Show system info
         run: systeminfo
 
-      # ----- Original tool installations (kept as requested) -----
+      # ----- Original tool installations (7‑Zip, Python, Go) -----
       - name: Install 7-Zip, Python, and Go
         run: |
           Write-Host "Downloading installers..."
@@ -44,30 +44,34 @@ jobs:
           pip show requests pyautogui pillow
           go version
 
-      # ----- RustDesk setup -----
-      - name: Download RustDesk MSI
+      # ----- NoMachine setup -----
+      - name: Download NoMachine installer
         run: |
-          Write-Host "Downloading RustDesk installer..."
-          Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/download/1.3.7/rustdesk-1.3.7-x86_64.msi" -OutFile "rustdesk.msi"
+          Write-Host "Downloading NoMachine..."
+          Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.14/NoMachine_8.14.2_1_x64.exe" -OutFile "nomachine.exe"
 
-      - name: Install RustDesk silently
+      - name: Install NoMachine silently
         run: |
-          Start-Process msiexec.exe -ArgumentList '/i rustdesk.msi /quiet /norestart' -Wait
+          Write-Host "Installing NoMachine (silent)..."
+          Start-Process -FilePath ".\nomachine.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait
 
-      - name: Start RustDesk with permanent password
+      - name: Start NoMachine Monitor
         run: |
-          $pin = "${{ github.event.inputs.PIN }}"
-          $rustDeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
-          Write-Host "Launching RustDesk..."
-          Start-Process -FilePath $rustDeskExe -ArgumentList "--password", $pin
+          Write-Host "Opening NoMachine Monitor to display connection details..."
+          $monitorExe = "$env:ProgramFiles\NoMachine\bin\nxmonitor.exe"
+          if (Test-Path $monitorExe) {
+              Start-Process -FilePath $monitorExe
+          } else {
+              Write-Host "Monitor not found – trying tray launcher..."
+              # Sometimes the monitor is started via the tray, just wait for the process
+          }
+          # Give the window time to fully appear
+          Start-Sleep -Seconds 5
 
-      - name: Wait for RustDesk window to appear
-        run: Start-Sleep -Seconds 4
-
-      # ----- NEW: Minimize interfering windows (hosted agent, PowerShell, CMD) -----
+      # ----- Minimize interfering windows (same as before) -----
       - name: Minimize interfering windows
         run: |
-          Write-Host "Minimizing terminal windows that could cover RustDesk..."
+          Write-Host "Minimizing terminal windows that could cover NoMachine..."
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "WinMin" -Namespace "User32"
           $SW_MINIMIZE = 6
           $patterns = @("*hosted-compute-agent*", "*Windows PowerShell*", "*Command Prompt*", "*cmd*")
@@ -82,13 +86,18 @@ jobs:
                   }
               }
           }
-          # Give windows time to minimize
           Start-Sleep -Seconds 1
 
-      # ----- Force RustDesk topmost + maximized (no occlusion possible now) -----
-      - name: Force RustDesk window topmost and maximized
+      # ----- Force NoMachine Monitor window topmost + maximized -----
+      - name: Force NoMachine Monitor window to front, fullscreen
         run: |
-          $process = Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Select -First 1
+          $process = Get-Process -Name nxmonitor -ErrorAction SilentlyContinue | Select -First 1
+          if (-not $process) {
+              Write-Host "nxmonitor process not found. Trying to find by window title..."
+              # Fallback: look for any window with "NoMachine" in title
+              $allProcesses = Get-Process | Where-Object { $_.MainWindowTitle -like "*NoMachine*" }
+              if ($allProcesses) { $process = $allProcesses[0] }
+          }
           if ($process) {
               $hwnd = $process.MainWindowHandle
               Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);' -Name "WinPos" -Namespace "User32"
@@ -102,12 +111,12 @@ jobs:
               Start-Sleep -Milliseconds 500
               [User32.WinPos]::SetWindowPos($hwnd, $HWND_TOPMOST, 0, 0, 0, 0, ($SWP_NOMOVE -bor $SWP_NOSIZE))
               Start-Sleep -Seconds 1
-              Write-Host "RustDesk is now full-screen and always on top."
+              Write-Host "NoMachine Monitor is now full-screen and always on top."
           } else {
-              Write-Host "RustDesk process not found – continuing anyway."
+              Write-Host "Could not find NoMachine window – screenshot may show desktop."
           }
 
-      # ----- Screenshot and upload (pure PowerShell, no here‑string) -----
+      # ----- Screenshot and upload (pure PowerShell) -----
       - name: Take screenshot, upload, and print URL
         run: |
           Write-Host "Taking screenshot..."
@@ -128,7 +137,7 @@ jobs:
       # ----- Keep alive (6 hours) -----
       - name: Keep machine alive with timer (6 hours)
         run: |
-          Write-Host "Machine ready. Screenshot uploaded – use the URL above to see RustDesk credentials."
+          Write-Host "NoMachine is running. Screenshot uploaded – use the URL to see connection details."
           $totalMinutes = 360
           $interval = 30
           for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
