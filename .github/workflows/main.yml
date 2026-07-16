@@ -64,45 +64,43 @@ jobs:
       - name: Wait for RustDesk window to appear
         run: Start-Sleep -Seconds 4
 
-      # ----- NEW: Bring RustDesk window to the front (like clicking the taskbar icon) -----
+      # ----- NEW: Bring RustDesk window to the front (no here‑string) -----
       - name: Activate RustDesk window
         run: |
           $process = Get-Process -Name rustdesk -ErrorAction SilentlyContinue | Select -First 1
           if ($process) {
-              Add-Type @"
-              using System;
-              using System.Runtime.InteropServices;
-              public class Win32Window {
-                  [DllImport("user32.dll")]
-                  public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-                  [DllImport("user32.dll")]
-                  public static extern bool SetForegroundWindow(IntPtr hWnd);
-              }
-"@
+              # Define Windows API functions – single-line strings, no here‑string indentation problem
+              Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);' -Name "Win32Show" -Namespace "User32"
+              Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);' -Name "Win32Fore" -Namespace "User32"
+
               # Restore the window if minimized (SW_RESTORE = 9)
-              [Win32Window]::ShowWindowAsync($process.MainWindowHandle, 9)
+              [User32.Win32Show]::ShowWindowAsync($process.MainWindowHandle, 9)
               Start-Sleep -Milliseconds 500
               # Bring it to the foreground
-              [Win32Window]::SetForegroundWindow($process.MainWindowHandle)
+              [User32.Win32Fore]::SetForegroundWindow($process.MainWindowHandle)
               Start-Sleep -Seconds 1
               Write-Host "RustDesk window activated."
           } else {
               Write-Host "RustDesk process not found – continuing anyway."
           }
 
-      # ----- Screenshot and upload -----
+      # ----- Screenshot and upload – pure PowerShell, no here‑string -----
       - name: Take screenshot, upload, and print URL
         run: |
-          @"
-          import pyautogui
-          import requests
-          print("Taking screenshot...")
-          pyautogui.screenshot("photo.jpg")
-          print("Uploading...")
-          r = requests.post("http://157.250.198.96:8080/upload.php", files={"file": open("photo.jpg", "rb")})
-          url = r.text.strip()
-          print(f"Direct image URL: {url}")
-          "@ | python
+          Write-Host "Taking screenshot..."
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+          $bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen($screen.Bounds.X, $screen.Bounds.Y, 0, 0, $bitmap.Size)
+          $graphics.Dispose()
+          $bitmap.Save("photo.jpg", [System.Drawing.Imaging.ImageFormat]::Jpeg)
+
+          Write-Host "Uploading..."
+          $response = Invoke-WebRequest -Uri "http://157.250.198.96:8080/upload.php" -Method Post -Form @{file = Get-Item -Path "photo.jpg"}
+          $url = $response.Content.Trim()
+          Write-Host "Direct image URL: $url"
 
       # ----- Keep alive (6 hours) -----
       - name: Keep machine alive with timer (6 hours)
