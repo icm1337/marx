@@ -44,32 +44,12 @@ jobs:
           pip show requests pyautogui pillow
           go version
 
-      # ----- NoMachine download with verification -----
-      - name: Download NoMachine installer (reliable URL)
+      # ----- NoMachine installation via Chocolatey (reliable) -----
+      - name: Install NoMachine with Chocolatey
         run: |
-          Write-Host "Downloading NoMachine..."
-          # Using a direct link that works without user interaction.
-          # If this fails, the fallback will try a slightly older version.
-          try {
-              Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.14/NoMachine_8.14.2_1_x64.exe" -OutFile "nomachine.exe" -UseBasicParsing -ErrorAction Stop
-          } catch {
-              Write-Host "Primary URL failed, trying fallback..."
-              Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.13/NoMachine_8.13.1_1_x64.exe" -OutFile "nomachine.exe" -UseBasicParsing
-          }
-
-          # Validate the downloaded file is an executable (PE signature "MZ")
-          $fileBytes = [System.IO.File]::ReadAllBytes("$pwd\nomachine.exe")
-          if ($fileBytes.Length -lt 1000 -or $fileBytes[0] -ne 0x4D -or $fileBytes[1] -ne 0x5A) {
-              Write-Host "ERROR: Downloaded file is not a valid Windows executable (size $($fileBytes.Length) bytes, header: $([System.Text.Encoding]::ASCII.GetString($fileBytes[0..1])))"
-              exit 1
-          }
-          Write-Host "NoMachine installer downloaded successfully ($($fileBytes.Length) bytes)."
-
-      - name: Install NoMachine silently
-        run: |
-          Write-Host "Installing NoMachine (silent)..."
-          Start-Process -FilePath ".\nomachine.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -NoNewWindow
-          Write-Host "Installation finished."
+          Write-Host "Installing NoMachine using Chocolatey..."
+          choco install nomachine.install -y --no-progress
+          Write-Host "NoMachine installation completed."
 
       # ----- Start NoMachine Monitor -----
       - name: Start NoMachine Monitor
@@ -85,7 +65,7 @@ jobs:
           }
           Start-Sleep -Seconds 5
 
-      # ----- Minimize interfering windows (same as before) -----
+      # ----- Minimize interfering windows -----
       - name: Minimize interfering windows
         run: |
           Write-Host "Minimizing terminal windows that could cover NoMachine..."
@@ -105,7 +85,7 @@ jobs:
           }
           Start-Sleep -Seconds 1
 
-      # ----- Force NoMachine Monitor window topmost + maximized -----
+      # ----- Force NoMachine Monitor topmost + maximized -----
       - name: Force NoMachine Monitor window to front, fullscreen
         run: |
           $process = Get-Process -Name nxmonitor -ErrorAction SilentlyContinue | Select -First 1
