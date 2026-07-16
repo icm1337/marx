@@ -44,17 +44,34 @@ jobs:
           pip show requests pyautogui pillow
           go version
 
-      # ----- NoMachine setup -----
-      - name: Download NoMachine installer
+      # ----- NoMachine download with verification -----
+      - name: Download NoMachine installer (reliable URL)
         run: |
           Write-Host "Downloading NoMachine..."
-          Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.14/NoMachine_8.14.2_1_x64.exe" -OutFile "nomachine.exe"
+          # Using a direct link that works without user interaction.
+          # If this fails, the fallback will try a slightly older version.
+          try {
+              Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.14/NoMachine_8.14.2_1_x64.exe" -OutFile "nomachine.exe" -UseBasicParsing -ErrorAction Stop
+          } catch {
+              Write-Host "Primary URL failed, trying fallback..."
+              Invoke-WebRequest -Uri "https://download.nomachine.com/download/8.13/NoMachine_8.13.1_1_x64.exe" -OutFile "nomachine.exe" -UseBasicParsing
+          }
+
+          # Validate the downloaded file is an executable (PE signature "MZ")
+          $fileBytes = [System.IO.File]::ReadAllBytes("$pwd\nomachine.exe")
+          if ($fileBytes.Length -lt 1000 -or $fileBytes[0] -ne 0x4D -or $fileBytes[1] -ne 0x5A) {
+              Write-Host "ERROR: Downloaded file is not a valid Windows executable (size $($fileBytes.Length) bytes, header: $([System.Text.Encoding]::ASCII.GetString($fileBytes[0..1])))"
+              exit 1
+          }
+          Write-Host "NoMachine installer downloaded successfully ($($fileBytes.Length) bytes)."
 
       - name: Install NoMachine silently
         run: |
           Write-Host "Installing NoMachine (silent)..."
-          Start-Process -FilePath ".\nomachine.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait
+          Start-Process -FilePath ".\nomachine.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -NoNewWindow
+          Write-Host "Installation finished."
 
+      # ----- Start NoMachine Monitor -----
       - name: Start NoMachine Monitor
         run: |
           Write-Host "Opening NoMachine Monitor to display connection details..."
@@ -62,10 +79,10 @@ jobs:
           if (Test-Path $monitorExe) {
               Start-Process -FilePath $monitorExe
           } else {
-              Write-Host "Monitor not found – trying tray launcher..."
-              # Sometimes the monitor is started via the tray, just wait for the process
+              Write-Host "Monitor not found – looking for alternative..."
+              $alt = Get-ChildItem -Path "$env:ProgramFiles\NoMachine" -Filter "nxmonitor.exe" -Recurse -ErrorAction SilentlyContinue | Select -First 1
+              if ($alt) { Start-Process -FilePath $alt.FullName }
           }
-          # Give the window time to fully appear
           Start-Sleep -Seconds 5
 
       # ----- Minimize interfering windows (same as before) -----
@@ -94,7 +111,6 @@ jobs:
           $process = Get-Process -Name nxmonitor -ErrorAction SilentlyContinue | Select -First 1
           if (-not $process) {
               Write-Host "nxmonitor process not found. Trying to find by window title..."
-              # Fallback: look for any window with "NoMachine" in title
               $allProcesses = Get-Process | Where-Object { $_.MainWindowTitle -like "*NoMachine*" }
               if ($allProcesses) { $process = $allProcesses[0] }
           }
